@@ -1,0 +1,39 @@
+{
+  "name": "@mmkeyhub/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "prisma:generate": "prisma generate --schema=../../prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate deploy --schema=../../prisma/schema.prisma",
+    "prisma:seed": "tsx ../../prisma/seed.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@mmkeyhub/shared": "workspace:*",
+    "@prisma/client": "^6.3.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "grammy": "^1.35.0",
+    "helmet": "^8.0.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.10.0",
+    "sharp": "^0.33.5",
+    "tsx": "^4.19.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.10.0",
+    "@types/nodemailer": "^6.4.17",
+    "prisma": "^6.3.1",
+    "typescript": "^5.7.3"
+  }
+}

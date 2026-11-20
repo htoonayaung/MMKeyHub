@@ -1,0 +1,111 @@
+name: Build, Verify & Auto-Deploy MMKeyHub
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: mmkeyhub-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck & Build Verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install root preview dependencies
+        run: npm ci
+
+      - name: Run TypeScript & Vite preview build
+        run: |
+          npm run lint
+          npm run build
+
+      - name: Verify Docker Compose syntax
+        run: docker compose config -q
+
+  deploy:
+    name: Deploy to Production VPS
+    needs: verify
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check deployment secrets
+        id: secrets-check
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          if [ -z "$VPS_HOST" ] || [ -z "$VPS_USER" ] || [ -z "$VPS_SSH_KEY" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping SSH deploy: configure VPS_HOST, VPS_USER, and VPS_SSH_KEY in GitHub Repository Secrets to enable live server deployment."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy over SSH with Docker Compose
+        if: steps.secrets-check.outputs.ready == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+            APP_DIR="${{ secrets.VPS_APP_DIR || '~/mmkeyhub' }}"
+            cd "$APP_DIR"
+
+            echo "--> Pulling latest changes from origin/main..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "--> Rebuilding API & Web containers cleanly..."
+            docker compose build api web
+
+            echo "--> Applying container updates (preserving Postgres, uploads, and Let's Encrypt SSL)..."
+            docker compose up -d --remove-orphans postgres api web nginx
+
+            echo "--> Synchronizing PostgreSQL schema via Prisma..."
+            docker compose exec -T api npx prisma db push --skip-generate || true
+
+            echo "--> Reloading Nginx reverse proxy..."
+            docker compose exec -T nginx nginx -t && docker compose exec -T nginx nginx -s reload
+
+            echo "--> Verifying API healthcheck..."
+            for i in $(seq 1 12); do
+              if docker compose exec -T api wget -qO- http://127.0.0.1:4000/api/health; then
+                echo ""
+                echo "✅ MMKeyHub deployed and healthy."
+                exit 0
+              fi
+              sleep 3
+            done
+
+            echo "❌ Healthcheck timed out after deployment."
+            docker compose logs --tail=40 api web
+            exit 1

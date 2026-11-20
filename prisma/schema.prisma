@@ -1,0 +1,357 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Locale {
+  EN
+  MM
+}
+
+enum DeliveryFormat {
+  LICENSE_KEY
+  ACCOUNT_LOGIN
+  VPN_CONFIG
+}
+
+enum AssetStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+  REVOKED
+}
+
+enum PaymentProvider {
+  KPAY
+  WAVEPAY
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum ActorType {
+  SYSTEM
+  CUSTOMER
+  ADMIN
+  WEBHOOK
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_MMK
+}
+
+enum VerificationMode {
+  AUTO_VERIFIED
+  MANUAL_REVIEW
+  ADMIN_APPROVED
+}
+
+model Customer {
+  id               String   @id @default(cuid())
+  telegramId       BigInt?  @unique
+  telegramUsername String?
+  firstName        String?
+  lastName         String?
+  email            String?  @unique
+  phone            String?  @unique
+  preferredLocale  Locale   @default(EN)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  orders Order[]
+
+  @@index([telegramId])
+  @@index([email])
+  @@index([phone])
+}
+
+model Category {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  nameEn        String
+  nameMm        String
+  descriptionEn String?
+  descriptionMm String?
+  sortOrder     Int      @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  products Product[]
+
+  @@index([isActive, sortOrder])
+}
+
+model Product {
+  id                     String         @id @default(cuid())
+  categoryId             String
+  category               Category       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  slug                   String         @unique
+  titleEn                String
+  titleMm                String
+  descriptionEn          String         @db.Text
+  descriptionMm          String         @db.Text
+  deliveryInstructionsEn String?        @db.Text
+  deliveryInstructionsMm String?        @db.Text
+  priceMmk               Int
+  originalPriceMmk       Int?
+  deliveryFormat         DeliveryFormat
+  durationLabelEn        String?
+  durationLabelMm        String?
+  imageUrl               String?
+  isFeatured             Boolean        @default(false)
+  isActive               Boolean        @default(true)
+  sortOrder              Int            @default(0)
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  assets     DigitalAsset[]
+  orderItems OrderItem[]
+
+  @@index([categoryId, isActive, sortOrder])
+  @@index([isFeatured, isActive])
+  @@index([deliveryFormat, isActive])
+}
+
+model DigitalAsset {
+  id               String      @id @default(cuid())
+  productId        String
+  product          Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItemId      String?
+  orderItem        OrderItem?  @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  status           AssetStatus @default(AVAILABLE)
+  encryptedPayload String      @db.Text
+  iv               String
+  authTag          String
+  keyFingerprint   String      @unique
+  regionLabel      String?
+  expiresAt        DateTime?
+  reservedUntil    DateTime?
+  soldAt           DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  // Composite index to accelerate SELECT ... FOR UPDATE SKIP LOCKED stock allocation
+  @@index([productId, status, createdAt])
+  @@index([orderItemId])
+  @@index([status, reservedUntil])
+}
+
+model PaymentMethod {
+  id             String          @id @default(cuid())
+  provider       PaymentProvider @unique
+  accountName    String
+  accountPhone   String
+  qrImageUrl     String
+  instructionsEn String?         @db.Text
+  instructionsMm String?         @db.Text
+  isActive       Boolean         @default(true)
+  sortOrder      Int             @default(0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+model PromoCode {
+  id            String       @id @default(cuid())
+  code          String       @unique
+  discountType  DiscountType
+  discountValue Int
+  maxUses       Int?
+  usedCount     Int          @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  orders Order[]
+
+  @@index([code, isActive])
+}
+
+model Order {
+  id                   String      @id @default(cuid())
+  orderNumber          String      @unique
+  accessToken          String      @unique
+  customerId           String
+  customer             Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  status               OrderStatus @default(PENDING_PAYMENT)
+  locale               Locale      @default(EN)
+  subtotalMmk          Int?
+  discountMmk          Int         @default(0)
+  totalMmk             Int
+  promoCodeId          String?
+  promoCode            PromoCode?  @relation(fields: [promoCodeId], references: [id], onDelete: SetNull)
+  promoCodeText        String?
+  contactEmail         String?
+  contactPhone         String?
+  telegramChatId       BigInt?
+  adminGroupChatId     BigInt?
+  adminMessageId       Int?
+  reviewedByTelegramId BigInt?
+  reviewedByName       String?
+  rejectionReason      String?     @db.Text
+  expiresAt            DateTime?
+  reviewedAt           DateTime?
+  warrantyExpiresAt    DateTime?
+  expiryReminderSentAt DateTime?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  items         OrderItem[]
+  paymentProofs PaymentProof[]
+
+  @@index([customerId, createdAt])
+  @@index([status, createdAt])
+  @@index([status, warrantyExpiresAt, expiryReminderSentAt])
+  @@index([promoCodeId])
+  @@index([contactEmail])
+  @@index([contactPhone])
+  @@index([telegramChatId])
+}
+
+model OrderItem {
+  id           String   @id @default(cuid())
+  orderId      String
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity     Int      @default(1)
+  unitPriceMmk Int
+  subtotalMmk  Int
+  createdAt    DateTime @default(now())
+
+  assets DigitalAsset[]
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model PaymentProof {
+  id                     String           @id @default(cuid())
+  orderId                String
+  order                  Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider               PaymentProvider
+  receiptPath            String
+  receiptHash            String?
+  perceptualHash         String?
+  mimeType               String
+  fileSizeBytes          Int
+  transactionLast6       String?
+  isDuplicateTxWarning   Boolean          @default(false)
+  duplicateTxOrderNumber String?
+  isSimilarSlipWarning   Boolean          @default(false)
+  similarSlipOrderNumber String?
+  similarSlipDistance    Int?
+  verificationMode       VerificationMode @default(MANUAL_REVIEW)
+  ocrExtractedTxId       String?
+  ocrExtractedAmount     Int?
+  ocrConfidenceScore     Float?
+  ocrTamperingFlags      String[]         @default([])
+  ocrValidationNotes     String?          @db.Text
+  senderName             String?
+  senderPhone            String?
+  submittedAt            DateTime         @default(now())
+
+  @@index([orderId, submittedAt])
+  @@index([provider, transactionLast6])
+  @@index([provider, ocrExtractedTxId])
+  @@index([verificationMode, submittedAt])
+  @@index([receiptHash])
+  @@index([perceptualHash])
+}
+
+model IncomingPayment {
+  id               String          @id @default(cuid())
+  provider         PaymentProvider
+  transactionId    String          @unique
+  transactionLast6 String?
+  amountMmk        Int
+  senderInfo       String?
+  rawMessage       String          @db.Text
+  isMatched        Boolean         @default(false)
+  matchedOrderId   String?
+  matchedAt        DateTime?
+  receivedAt       DateTime        @default(now())
+
+  @@index([isMatched, provider, amountMmk, transactionLast6])
+  @@index([transactionId])
+  @@index([receivedAt])
+}
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  actorType  ActorType
+  actorId    String
+  actorIp    String?
+  action     String
+  entityType String
+  entityId   String
+  targetId   String?
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorType, actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([createdAt])
+}
+
+model BotSubscriber {
+  id               String   @id @default(cuid())
+  telegramUserId   BigInt   @unique
+  telegramUsername String?
+  firstName        String?
+  lastName         String?
+  source           String   @default("BOT")
+  isBlocked        Boolean  @default(false)
+  lastActiveAt     DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([isBlocked, lastActiveAt])
+}
+
+model SupportTicket {
+  id                  String   @id @default(cuid())
+  ticketNumber        String   @unique
+  telegramUserId      BigInt
+  telegramUsername    String?
+  orderNumber         String?
+  message             String   @db.Text
+  adminGroupChatId    BigInt?
+  adminGroupMessageId Int?
+  status              String   @default("OPEN")
+  adminReply          String?  @db.Text
+  repliedBy           String?
+  repliedAt           DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([adminGroupChatId, adminGroupMessageId])
+  @@index([telegramUserId, createdAt])
+  @@index([status, createdAt])
+}
+
+model MerchantSettings {
+  id               String    @id @default("default")
+  isShopOpen       Boolean   @default(true)
+  offlineNotice    String    @default("Night Mode is active. Admin approvals may be delayed until morning (08:00 AM MMT). You can still submit orders to reserve stock.") @db.Text
+  brandLogoUrl     String?   @db.Text
+  flashSaleEndsAt  DateTime?
+  flashSaleLabelEn String?
+  flashSaleLabelMm String?
+  heroSlides       Json?
+  updatedAt        DateTime  @updatedAt
+}

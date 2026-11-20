@@ -1,0 +1,6 @@
+{
+  "name": "KyatVault",
+  "description": "Unified bilingual MMK digital product storefront for Web and Telegram Mini App with KPay and WavePay checkout.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
